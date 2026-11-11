@@ -42,10 +42,10 @@ jobs:
 
       - name: Diagnose restored JavaScript state declarations
         run: |
-          echo '--- App.js lines 65-90 ---'
-          nl -ba App.js | sed -n '65,90p'
-          echo '--- state declarations ---'
-          grep -nE 'const \\[(accounts|orders|payments|payouts),' App.js || true
+          echo '--- App.js lines 1-100 ---'
+          nl -ba App.js | sed -n '1,100p'
+          echo '--- all orders declarations/usages ---'
+          grep -n 'orders\|setOrders\|seedOrders' App.js | head -n 60
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund
