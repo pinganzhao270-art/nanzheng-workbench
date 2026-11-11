@@ -32,26 +32,32 @@ jobs:
           base64 --decode .github/source/App.js.gz.b64 | gzip --decompress --stdout > App.js
           sed -i "s/import { supabase, supabaseConfigured } from '.\/lib\/supabase';/import { supabase } from '.\/lib\/supabase';/" App.js
           sed -i "s/supabaseConfigured?'刷新完成':'本地演示数据已刷新'/supabase?'刷新完成':'请先配置登录服务'/" App.js
-          # Remove the duplicate accounts entry from the composite state declaration.
+          # Remove the second identical composite React state declaration.
           python3 - <<'PY'
           from pathlib import Path
           import re
           p = Path("App.js")
-          s = p.read_text()
-          pattern = re.compile(
-              r"const\\s*\\[\\s*accounts\\s*,\\s*setAccounts\\s*\\]\\s*=\\s*useState\\s*\\(\\s*seedAccounts\\s*\\)\\s*,\\s*"
-              r"\\[\\s*orders\\s*,\\s*setOrders\\s*\\]\\s*=\\s*useState\\s*\\(\\s*seedOrders\\s*\\)\\s*,\\s*"
-              r"\\[\\s*payments\\s*,\\s*setPayments\\s*\\]\\s*=\\s*useState\\s*\\(\\s*seedPayments\\s*\\)\\s*,\\s*"
-              r"\\[\\s*payouts\\s*,\\s*setPayouts\\s*\\]\\s*=\\s*useState\\s*\\(\\s*seedPayouts\\s*\\)\\s*;"
+          lines = p.read_text().splitlines()
+          state_re = re.compile(
+              r"^\s*const\s*\[\s*accounts\s*,\s*setAccounts\s*\]\s*=\s*useState\s*\(\s*seedAccounts\s*\)\s*,\s*"
+              r"\[\s*orders\s*,\s*setOrders\s*\]\s*=\s*useState\s*\(\s*seedOrders\s*\)\s*,\s*"
+              r"\[\s*payments\s*,\s*setPayments\s*\]\s*=\s*useState\s*\(\s*seedPayments\s*\)\s*,\s*"
+              r"\[\s*payouts\s*,\s*setPayouts\s*\]\s*=\s*useState\s*\(\s*seedPayouts\s*\)\s*;\s*$"
           )
-          s2, n = pattern.subn("const [accounts,setAccounts]=useState(seedAccounts);", s, count=1)
-          if n != 1:
-              print("Could not match composite declaration; nearby state lines:")
-              for i, line in enumerate(s.splitlines(), 1):
+          hits = [i for i, line in enumerate(lines) if state_re.match(line)]
+          if len(hits) != 2:
+              print("Expected exactly two identical composite declarations; found", len(hits))
+              for i, line in enumerate(lines, 1):
                   if any(x in line for x in ("seedAccounts", "seedOrders", "seedPayments", "seedPayouts")):
                       print(f"{i}: {line}")
-              raise SystemExit("State declaration normalization did not match")
-          p.write_text(s2)
+              raise SystemExit("Unexpected React state declaration layout")
+          del lines[hits[1]]
+          s = "\n".join(lines) + "\n"
+          for name, setter in (("accounts", "setAccounts"), ("orders", "setOrders"), ("payments", "setPayments"), ("payouts", "setPayouts")):
+              count = len(re.findall(rf"\[\s*{name}\s*,\s*{setter}\s*\]\s*=\s*useState", s))
+              if count != 1:
+                  raise SystemExit(f"Expected one {name} state declaration, found {count}")
+          p.write_text(s)
           PY
           test -s App.js
           echo "Restored App.js ($(wc -c < App.js) bytes)"
