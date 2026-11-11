@@ -29,6 +29,15 @@ jobs:
       - name: Generate Android project
         working-directory: zhengnan-workbench
         run: npx expo prebuild --platform android --no-install
+      - name: Diagnose Expo native module metadata
+        working-directory: zhengnan-workbench
+        run: |
+          echo '--- Expo autolinking resolved modules ---'
+          npx expo-modules-autolinking resolve --platform android --json
+          echo '--- Generated Android settings.gradle ---'
+          nl -ba android/settings.gradle | sed -n '1,100p'
+          echo '--- Expo module manifests ---'
+          find node_modules -name expo-module.config.json -print
       - name: Build release APK
         working-directory: zhengnan-workbench/android
         run: ./gradlew assembleRelease --no-daemon
