@@ -32,16 +32,26 @@ jobs:
           base64 --decode .github/source/App.js.gz.b64 | gzip --decompress --stdout > App.js
           sed -i "s/import { supabase, supabaseConfigured } from '.\/lib\/supabase';/import { supabase } from '.\/lib\/supabase';/" App.js
           sed -i "s/supabaseConfigured?'刷新完成':'本地演示数据已刷新'/supabase?'刷新完成':'请先配置登录服务'/" App.js
-          # Normalize the duplicate composite state declaration with an exact string replacement.
+          # Remove the duplicate accounts entry from the composite state declaration.
           python3 - <<'PY'
           from pathlib import Path
+          import re
           p = Path("App.js")
           s = p.read_text()
-          old = "const [accounts,setAccounts]=useState(seedAccounts),[orders,setOrders]=useState(seedOrders),[payments,setPayments]=useState(seedPayments),[payouts,setPayouts]=useState(seedPayouts);"
-          new = "const [accounts,setAccounts]=useState(seedAccounts);"
-          if old not in s:
-              raise SystemExit("Expected duplicate composite declaration was not found")
-          p.write_text(s.replace(old, new, 1))
+          pattern = re.compile(
+              r"const\\s*\\[\\s*accounts\\s*,\\s*setAccounts\\s*\\]\\s*=\\s*useState\\s*\\(\\s*seedAccounts\\s*\\)\\s*,\\s*"
+              r"\\[\\s*orders\\s*,\\s*setOrders\\s*\\]\\s*=\\s*useState\\s*\\(\\s*seedOrders\\s*\\)\\s*,\\s*"
+              r"\\[\\s*payments\\s*,\\s*setPayments\\s*\\]\\s*=\\s*useState\\s*\\(\\s*seedPayments\\s*\\)\\s*,\\s*"
+              r"\\[\\s*payouts\\s*,\\s*setPayouts\\s*\\]\\s*=\\s*useState\\s*\\(\\s*seedPayouts\\s*\\)\\s*;"
+          )
+          s2, n = pattern.subn("const [accounts,setAccounts]=useState(seedAccounts);", s, count=1)
+          if n != 1:
+              print("Could not match composite declaration; nearby state lines:")
+              for i, line in enumerate(s.splitlines(), 1):
+                  if any(x in line for x in ("seedAccounts", "seedOrders", "seedPayments", "seedPayouts")):
+                      print(f"{i}: {line}")
+              raise SystemExit("State declaration normalization did not match")
+          p.write_text(s2)
           PY
           test -s App.js
           echo "Restored App.js ($(wc -c < App.js) bytes)"
