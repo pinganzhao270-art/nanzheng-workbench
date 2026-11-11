@@ -1,13 +1,10 @@
 name: Build Android APK
-
 on:
   push:
     branches: [main]
   workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
   android-apk:
     runs-on: ubuntu-latest
@@ -15,76 +12,42 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
-
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
-
+          cache: npm
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-
-      - name: Restore rebuilt Rongtong-style app source
+      - name: Confirm canonical source
         run: |
-          base64 --decode .github/source/App.js.gz.b64 | gzip --decompress --stdout > App.js
-          sed -i "s/import { supabase, supabaseConfigured } from '.\/lib\/supabase';/import { supabase } from '.\/lib\/supabase';/" App.js
-          sed -i "s/supabaseConfigured?'刷新完成':'本地演示数据已刷新'/supabase?'刷新完成':'请先配置登录服务'/" App.js
-          # Remove the second identical composite React state declaration.
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-          p = Path("App.js")
-          lines = p.read_text().splitlines()
-          state_re = re.compile(
-              r"^\s*const\s*\[\s*accounts\s*,\s*setAccounts\s*\]\s*=\s*useState\s*\(\s*seedAccounts\s*\)\s*,\s*"
-              r"\[\s*orders\s*,\s*setOrders\s*\]\s*=\s*useState\s*\(\s*seedOrders\s*\)\s*,\s*"
-              r"\[\s*payments\s*,\s*setPayments\s*\]\s*=\s*useState\s*\(\s*seedPayments\s*\)\s*,\s*"
-              r"\[\s*payouts\s*,\s*setPayouts\s*\]\s*=\s*useState\s*\(\s*seedPayouts\s*\)\s*;\s*$"
-          )
-          hits = [i for i, line in enumerate(lines) if state_re.match(line)]
-          if len(hits) != 2:
-              print("Expected exactly two identical composite declarations; found", len(hits))
-              for i, line in enumerate(lines, 1):
-                  if any(x in line for x in ("seedAccounts", "seedOrders", "seedPayments", "seedPayouts")):
-                      print(f"{i}: {line}")
-              raise SystemExit("Unexpected React state declaration layout")
-          del lines[hits[1]]
-          s = "\n".join(lines) + "\n"
-          for name, setter in (("accounts", "setAccounts"), ("orders", "setOrders"), ("payments", "setPayments"), ("payouts", "setPayouts")):
-              count = len(re.findall(rf"\[\s*{name}\s*,\s*{setter}\s*\]\s*=\s*useState", s))
-              if count != 1:
-                  raise SystemExit(f"Expected one {name} state declaration, found {count}")
-          p.write_text(s)
-          PY
           test -s App.js
-          echo "Restored App.js ($(wc -c < App.js) bytes)"
-          echo "Checking restored source for duplicate state declarations"
-          test "$(grep -o 'const \[accounts,setAccounts\]' App.js | wc -l)" -le 1
-
-      - name: Diagnose restored JavaScript state declarations
-        run: |
-          echo '--- App.js lines 1-100 ---'
-          nl -ba App.js | sed -n '1,100p'
-          echo '--- all orders declarations/usages ---'
-          grep -n 'orders\|setOrders\|seedOrders' App.js | head -n 60
-
+          echo "Building root App.js ($(wc -c < App.js) bytes)"
+          grep -q "workbench_accounts" App.js
+          grep -q "workbench_orders" App.js
+          grep -q "store_admins" App.js
       - name: Install dependencies
         run: npm install --no-audit --no-fund
-
+      - name: Validate JavaScript bundle
+        run: npx expo export --platform android --output-dir dist-check
       - name: Generate Android project
         run: npx expo prebuild --platform android --no-install
-
       - name: Build installable APK
         working-directory: android
         run: ./gradlew assembleRelease --no-daemon
-
+      - name: Verify APK metadata
+        run: |
+          APK="$(find android/app/build/outputs/apk/release -name '*.apk' -print -quit)"
+          test -n "$APK" && test -s "$APK"
+          sha256sum "$APK"
+          "$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)/aapt" dump badging "$APK" | head -n 3
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: nanzheng-workbench-android-apk
+          name: nanzheng-workbench-android-apk-v1.2.0
           path: android/app/build/outputs/apk/release/*.apk
           if-no-files-found: error
           retention-days: 14
