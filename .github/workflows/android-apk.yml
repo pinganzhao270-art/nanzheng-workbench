@@ -30,6 +30,8 @@ jobs:
       - name: Restore rebuilt Rongtong-style app source
         run: |
           base64 --decode .github/source/App.js.gz.b64 | gzip --decompress --stdout > App.js
+          sed -i "s/import { supabase, supabaseConfigured } from '.\/lib\/supabase';/import { supabase } from '.\/lib\/supabase';/" App.js
+          sed -i "s/supabaseConfigured?'刷新完成':'本地演示数据已刷新'/supabase?'刷新完成':'请先配置登录服务'/" App.js
           test -s App.js
           echo "Restored App.js ($(wc -c < App.js) bytes)"
 
