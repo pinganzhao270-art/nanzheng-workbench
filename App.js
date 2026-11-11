@@ -1,247 +1,58 @@
-import React, { useEffect, useState } from 'react';
-import { SafeAreaView, View, Text, TextInput, TouchableOpacity, ScrollView, StatusBar, ActivityIndicator, Linking } from 'react-native';
-import { supabase } from './lib/supabase';
+import React,{useCallback,useEffect,useMemo,useState} from 'react';
+import {SafeAreaView,View,Text,TextInput,TouchableOpacity,ScrollView,StatusBar,ActivityIndicator,RefreshControl,Alert} from 'react-native';
+import {supabase} from './lib/supabase';
 
-const NAV = [
-  { id: 'home', label: '首页', icon: '⌂' },
-  { id: 'products', label: '商品', icon: '▦' },
-  { id: 'orders', label: '订单', icon: '▤' },
-  { id: 'team', label: '团队', icon: '♙' },
-  { id: 'stats', label: '统计', icon: '▥' },
-];
-const C = { navy:'#102B52', blue:'#245B9B', pale:'#EEF3F9', bg:'#F5F7FA', white:'#FFFFFF', ink:'#172B45', muted:'#7B8797', line:'#E5EAF0', green:'#16845B', red:'#B42318' };
-
-function Button({title,onPress,light=false,disabled=false}) {
-  return <TouchableOpacity disabled={disabled} onPress={onPress} style={{backgroundColor:disabled?'#AAB7C7':(light?C.pale:C.navy),paddingVertical:14,paddingHorizontal:18,borderRadius:12,alignItems:'center'}}>
-    <Text style={{color:light?C.navy:C.white,fontSize:15,fontWeight:'700'}}>{title}</Text>
-  </TouchableOpacity>;
+const C={navy:'#102B52',blue:'#245B9B',bg:'#F3F6FA',white:'#FFFFFF',ink:'#172B45',muted:'#78879A',line:'#E4EAF1',green:'#16845B',red:'#B42318',amber:'#A15C00'};
+const TABS=[['home','首页','⌂'],['accounts','账号','▦'],['orders','订单','▤'],['payments','付款','￥'],['payouts','代付','⇧'],['more','更多','•••']];
+const money=v=>'¥'+Number(v||0).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
+const date=v=>v?new Date(v).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}):'—';
+const err=e=>e?.message||'请求失败，请检查网络后重试';
+function Btn({title,onPress,light=false,disabled=false}){return <TouchableOpacity disabled={disabled} onPress={onPress} style={{backgroundColor:disabled?'#AAB7C7':light?'#EAF0F7':C.navy,padding:13,borderRadius:11,alignItems:'center',marginVertical:4}}><Text style={{color:light?C.navy:C.white,fontWeight:'800'}}>{title}</Text></TouchableOpacity>}
+function Field({label,value,onChange,placeholder,keyboardType='default'}){return <View style={{marginBottom:10}}><Text style={{fontSize:12,color:C.muted,marginBottom:5}}>{label}</Text><TextInput value={value} onChangeText={onChange} placeholder={placeholder||label} keyboardType={keyboardType} style={{backgroundColor:C.white,borderWidth:1,borderColor:C.line,borderRadius:10,padding:12,color:C.ink}} /></View>}
+function Card({children}){return <View style={{backgroundColor:C.white,borderRadius:14,padding:15,marginBottom:10,borderWidth:1,borderColor:C.line}}>{children}</View>}
+function Label({children}){return <Text style={{fontSize:12,color:C.muted}}>{children}</Text>}
+function App(){
+ const [session,setSession]=useState(null),[role,setRole]=useState(''),[ready,setReady]=useState(false),[busy,setBusy]=useState(false),[refreshing,setRefreshing]=useState(false);
+ const [email,setEmail]=useState(''),[password,setPassword]=useState(''),[notice,setNotice]=useState(''),[reset,setReset]=useState(false),[newPassword,setNewPassword]=useState('');
+ const [tab,setTab]=useState('home'),[sub,setSub]=useState(''),[query,setQuery]=useState(''),[status,setStatus]=useState('全部');
+ const [accounts,setAccounts]=useState([]),[orders,setOrders]=useState([]),[payments,setPayments]=useState([]),[payouts,setPayouts]=useState([]),[team,setTeam]=useState([]);
+ const [form,setForm]=useState({}),[editing,setEditing]=useState(null);
+ const isAdmin=role==='店主';
+ const access=async user=>{
+  if(!user?.id)throw new Error('登录信息无效，请重新登录');
+  const {data:a,error:ae}=await supabase.from('store_admins').select('user_id').eq('user_id',user.id).maybeSingle();
+  if(ae)throw ae;if(a)return '店主';
+  const {data:m,error:me}=await supabase.from('store_team_members').select('user_id').eq('user_id',user.id).maybeSingle();
+  if(me)throw me;if(m)return '团队成员';
+  throw new Error('此账号尚未获店主授权，请联系店主');
+ };
+ const accept=async s=>{if(!s?.user){setSession(null);setRole('');setReady(true);return;}try{const r=await access(s.user);setSession(s);setRole(r);setNotice('');}catch(e){await supabase.auth.signOut();setSession(null);setRole('');setNotice(err(e));}finally{setReady(true);}};
+ useEffect(()=>{let live=true;supabase.auth.getSession().then(({data,error})=>{if(error)throw error;return accept(data.session)}).catch(e=>{if(live){setNotice(err(e));setReady(true)}});const {data:l}=supabase.auth.onAuthStateChange((event,s)=>{Promise.resolve().then(()=>{if(live)accept(s)})});return()=>{live=false;l.subscription.unsubscribe()}},[]);
+ const load=useCallback(async()=>{if(!session?.user?.id)return;setRefreshing(true);try{const specs=[['workbench_accounts',setAccounts],['workbench_orders',setOrders],['workbench_payments',setPayments],['workbench_payouts',setPayouts]];for(const [table,setter] of specs){const {data,error}=await supabase.from(table).select('*').order('created_at',{ascending:false}).limit(200);if(error)throw error;setter(data||[]);}if(isAdmin){const {data,error}=await supabase.from('store_team_members').select('user_id,added_by,created_at').order('created_at',{ascending:false});if(error)throw error;setTeam(data||[]);} }catch(e){setNotice('数据刷新失败：'+err(e));}finally{setRefreshing(false)}},[session,isAdmin]);
+ useEffect(()=>{load()},[load]);
+ const login=async()=>{if(!email.trim()||!password){setNotice('请输入邮箱和密码');return;}setBusy(true);setNotice('');try{const {data,error}=await supabase.auth.signInWithPassword({email:email.trim().toLowerCase(),password});if(error)throw error;const r=await access(data.user);setSession(data.session);setRole(r);setTab('home');setPassword('');}catch(e){setNotice(err(e))}finally{setBusy(false)}};
+ const resetPassword=async()=>{if(!email.trim()){setNotice('请先输入注册邮箱');return;}setBusy(true);try{const {error}=await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(),{redirectTo:'nanzhengworkbench://reset-password'});if(error)throw error;setNotice('重置邮件已发送，请检查邮箱')}catch(e){setNotice(err(e))}finally{setBusy(false)}};
+ const savePassword=async()=>{if(newPassword.length<8){setNotice('密码至少需要8位');return;}setBusy(true);try{const {error}=await supabase.auth.updateUser({password:newPassword});if(error)throw error;await supabase.auth.signOut();setReset(false);setNotice('密码已修改，请重新登录')}catch(e){setNotice(err(e))}finally{setBusy(false)}};
+ const signOut=async()=>{await supabase.auth.signOut();setSession(null);setRole('');setTab('home')};
+ const openForm=(kind,item=null)=>{setEditing(item?.id||null);setForm(item?{...item}:{status:kind==='accounts'?'active':'pending',currency:'CNY',amount:'',note:''});setSub('form:'+kind)};
+ const saveRecord=async(kind)=>{if(!isAdmin){setNotice('团队成员只有查看权限');return;}setBusy(true);try{const maps={accounts:['workbench_accounts',['account_code','display_name','provider','account_hint','min_amount','max_amount','status','note']],orders:['workbench_orders',['order_no','customer_label','amount','currency','status','account_id','description']],payments:['workbench_payments',['payment_no','order_id','account_id','payer_label','amount','method','status','reference_no','note']],payouts:['workbench_payouts',['payout_no','payee_label','amount','method','status','reference_no','note']]};const [table,keys]=maps[kind];const payload={};keys.forEach(k=>{if(form[k]!==undefined)payload[k]=form[k]});if(kind==='accounts'){if(!payload.account_code||!payload.display_name)throw new Error('请填写账号编号和名称');payload.min_amount=Number(payload.min_amount||0);payload.max_amount=Number(payload.max_amount||0);}else{if(!payload.amount||Number(payload.amount)<=0)throw new Error('请输入有效金额');payload.amount=Number(payload.amount);if(kind==='orders'&&!payload.order_no)throw new Error('请填写订单编号');if(kind==='payments'&&!payload.payment_no)throw new Error('请填写付款编号');if(kind==='payouts'&&!payload.payout_no)throw new Error('请填写代付编号');}if(!editing)payload.created_by=session.user.id;if(kind==='payments')payload.recorded_by=session.user.id;if(kind==='payouts'&&!editing)payload.requested_by=session.user.id;const q=editing?supabase.from(table).update(payload).eq('id',editing):supabase.from(table).insert(payload);const {error}=await q;if(error)throw error;setSub('');setNotice('记录已保存');await load();}catch(e){setNotice(err(e));}finally{setBusy(false)}};
+ const changeStatus=async(kind,item,next)=>{if(!isAdmin){setNotice('团队成员无权修改');return;}const table={accounts:'workbench_accounts',orders:'workbench_orders',payments:'workbench_payments',payouts:'workbench_payouts'}[kind];Alert.alert('确认更新状态', '将记录状态改为「'+next+'」。这只更新工作台记录，不代表真实资金已到账或已划转。',[{text:'取消',style:'cancel'},{text:'确认',onPress:async()=>{try{const {error}=await supabase.from(table).update({status:next,updated_at:new Date().toISOString()}).eq('id',item.id);if(error)throw error;await load()}catch(e){setNotice(err(e))}}}])};
+ const total=orders.reduce((s,x)=>s+Number(x.amount||0),0),paid=payments.filter(x=>x.status==='confirmed').reduce((s,x)=>s+Number(x.amount||0),0),pending=payouts.filter(x=>x.status==='pending').length;
+ const list=useMemo(()=>{const src={accounts,orders,payments,payouts}[tab]||[];return src.filter(x=>(status==='全部'||x.status===status)&&JSON.stringify(x).toLowerCase().includes(query.toLowerCase()))},[accounts,orders,payments,payouts,tab,status,query]);
+ const title={home:'工作台首页',accounts:'收款账号',orders:'订单中心',payments:'付款管理',payouts:'代付管理',more:'更多功能'}[tab]||tab;
+ const go=t=>{setTab(t);setSub('');setQuery('');setStatus('全部');setNotice('')};
+ const field=(key,label,keyboardType)=> <Field key={key} label={label} value={String(form[key]??'')} keyboardType={keyboardType||'default'} onChange={v=>setForm(p=>({...p,[key]:v}))}/>;
+ if(!ready)return <SafeAreaView style={{flex:1,justifyContent:'center',alignItems:'center',backgroundColor:C.navy}}><ActivityIndicator color="#fff" size="large"/><Text style={{color:'#fff',marginTop:12}}>正在连接南政工作台…</Text></SafeAreaView>;
+ if(!session)return <SafeAreaView style={{flex:1,backgroundColor:C.navy,justifyContent:'center',padding:24}}><StatusBar barStyle="light-content"/><Text style={{fontSize:30,color:'#fff',fontWeight:'900',marginBottom:8}}>南政工作台</Text><Text style={{color:'#D2DDEC',marginBottom:28}}>内部业务管理 · CNY</Text><Card><Text style={{fontSize:20,fontWeight:'900',color:C.ink,marginBottom:14}}>账号登录</Text><Field label="邮箱" value={email} onChange={setEmail}/><Field label="密码" value={password} onChange={setPassword}/><Btn title={busy?'正在登录…':'登录'} onPress={login} disabled={busy}/><Btn title="忘记密码 / 发送重置邮件" light onPress={resetPassword} disabled={busy}/>{notice?<Text style={{color:C.red,marginTop:8}}>{notice}</Text>:null}</Card><Text style={{color:'#D2DDEC',textAlign:'center',marginTop:16}}>仅限店主及已授权团队成员</Text></SafeAreaView>;
+ return <SafeAreaView style={{flex:1,backgroundColor:C.bg}}><StatusBar barStyle="dark-content"/><View style={{backgroundColor:C.white,padding:15,borderBottomWidth:1,borderColor:C.line,flexDirection:'row',justifyContent:'space-between',alignItems:'center'}}><View><Text style={{fontSize:19,fontWeight:'900',color:C.navy}}>南政工作台</Text><Text style={{fontSize:11,color:C.muted,marginTop:3}}>{role} · {session.user.email}</Text></View><TouchableOpacity onPress={load}><Text style={{color:C.blue,fontWeight:'700'}}>刷新</Text></TouchableOpacity></View>
+ <ScrollView contentContainerStyle={{padding:14,paddingBottom:25}} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load}/>}>
+ {sub.startsWith('form:')? <><Text style={{fontSize:22,fontWeight:'900',color:C.ink,marginBottom:14}}>{editing?'编辑':'新增'}{({accounts:'收款账号',orders:'订单',payments:'付款记录',payouts:'代付记录'})[sub.slice(5)]}</Text>{sub==='form:accounts'?<>{field('account_code','账号编号')}{field('display_name','账号名称')}{field('provider','所属通道')}{field('account_hint','账号信息/尾号')}{field('min_amount','最低金额','decimal-pad')}{field('max_amount','最高金额','decimal-pad')}{field('status','状态（active/paused/disabled）')}{field('note','备注')}</>:sub==='form:orders'?<>{field('order_no','订单编号')}{field('customer_label','客户名称')}{field('amount','订单金额','decimal-pad')}{field('status','状态（pending/processing/completed/cancelled/refunded）')}{field('account_id','关联账号ID')}{field('description','订单说明')}</>:sub==='form:payments'?<>{field('payment_no','付款编号')}{field('payer_label','付款方')}{field('amount','金额','decimal-pad')}{field('method','付款方式')}{field('status','状态（pending/confirmed/failed/cancelled/refunded）')}{field('reference_no','交易参考号')}{field('note','备注')}</>:<>{field('payout_no','代付编号')}{field('payee_label','收款方')}{field('amount','金额','decimal-pad')}{field('method','付款方式')}{field('status','状态（pending/approved/rejected/recorded_paid/cancelled）')}{field('reference_no','回单/参考号')}{field('note','备注')}</>}<Btn title={busy?'保存中…':'保存记录'} onPress={()=>saveRecord(sub.slice(5))} disabled={busy}/><Btn title="取消返回" light onPress={()=>setSub('')}/></>:
+ sub==='team'?<><Text style={{fontSize:22,fontWeight:'900',color:C.ink,marginBottom:12}}>团队成员</Text><Card><Text style={{color:C.muted}}>成员管理目前由数据库授权表控制。店主可在安全管理后台授权成员；此页面展示已授权账号 ID。成员仅可读取业务记录。</Text></Card>{team.map(x=><Card key={x.user_id}><Text style={{fontWeight:'800',color:C.ink}}>{x.user_id}</Text><Label>加入时间：{date(x.created_at)}</Label></Card>)}</>:
+ sub==='stats'?<><Text style={{fontSize:22,fontWeight:'900',color:C.ink,marginBottom:12}}>经营统计</Text><Card><Label>订单总额（记录汇总）</Label><Text style={{fontSize:26,fontWeight:'900',color:C.navy}}>{money(total)}</Text></Card><Card><Label>已确认付款记录（非银行到账核验）</Label><Text style={{fontSize:26,fontWeight:'900',color:C.green}}>{money(paid)}</Text></Card><Card><Label>待处理代付笔数</Label><Text style={{fontSize:26,fontWeight:'900',color:C.navy}}>{pending}</Text></Card><Text style={{color:C.muted,fontSize:12}}>统计仅按工作台数据库记录汇总，不代表真实账户余额或资金结算。</Text></>:
+ tab==='home'?<><View style={{backgroundColor:C.navy,borderRadius:16,padding:20,marginBottom:14}}><Text style={{color:'#D6E2F0'}}>欢迎回来，{role}</Text><Text style={{fontSize:24,fontWeight:'900',color:'#fff',marginTop:6}}>业务工作台</Text><Text style={{color:'#D6E2F0',marginTop:7}}>南政内部管理 · 人民币 CNY</Text></View><View style={{flexDirection:'row',flexWrap:'wrap',justifyContent:'space-between'}}>{[['账号',accounts.length,'accounts'],['订单',orders.length,'orders'],['付款',payments.length,'payments'],['代付',payouts.length,'payouts']].map(x=><TouchableOpacity key={x[2]} onPress={()=>go(x[2])} style={{width:'48%',backgroundColor:C.white,padding:16,borderRadius:14,marginBottom:10,borderWidth:1,borderColor:C.line}}><Label>{x[0]}记录</Label><Text style={{fontSize:26,fontWeight:'900',color:C.navy,marginTop:7}}>{x[1]}</Text></TouchableOpacity>)}</View><Card><Text style={{fontWeight:'800',color:C.ink}}>常用功能</Text>{TABS.slice(1,5).map(x=><Btn key={x[0]} title={x[1]} light onPress={()=>go(x[0])}/>)}</Card><Card><Label>登录身份</Label><Text style={{color:C.ink,marginTop:5}}>{session.user.email} · {role}</Text></Card></>:
+ tab==='more'?<><Text style={{fontSize:22,fontWeight:'900',color:C.ink,marginBottom:12}}>更多功能</Text><Btn title="团队成员" onPress={()=>setSub('team')} light/><Btn title="经营统计" onPress={()=>setSub('stats')} light/><Btn title="刷新全部业务数据" onPress={load} light/><Card><Text style={{fontWeight:'800',color:C.ink}}>账户与安全</Text><Text style={{color:C.muted,marginTop:8}}>{session.user.email}</Text><Text style={{color:C.muted,marginTop:5}}>当前身份：{role}</Text><Btn title="退出登录" onPress={signOut}/></Card><Card><Text style={{fontWeight:'800',color:C.ink}}>功能说明</Text><Text style={{fontSize:12,color:C.muted,lineHeight:20,marginTop:6}}>业务记录存储于 Supabase。资金划转、真实付款、充值提现和支付渠道回调尚未接入，不会在本应用中伪造资金成功状态。</Text></Card></>:
+ <><Text style={{fontSize:22,fontWeight:'900',color:C.ink,marginBottom:10}}>{title}</Text><TextInput value={query} onChangeText={setQuery} placeholder="搜索编号、名称或备注" style={{backgroundColor:C.white,borderWidth:1,borderColor:C.line,borderRadius:10,padding:11,marginBottom:8}}/><ScrollView horizontal showsHorizontalScrollIndicator={false} style={{marginBottom:8}}>{['全部',...(tab==='accounts'?['active','paused','disabled']:tab==='orders'?['pending','processing','completed','cancelled','refunded']:tab==='payments'?['pending','confirmed','failed','cancelled','refunded']:['pending','approved','rejected','recorded_paid','cancelled'])].map(s=><TouchableOpacity key={s} onPress={()=>setStatus(s)} style={{paddingHorizontal:13,paddingVertical:8,borderRadius:20,backgroundColor:status===s?C.navy:C.white,marginRight:6}}><Text style={{color:status===s?C.white:C.ink,fontSize:12}}>{s}</Text></TouchableOpacity>)}</ScrollView>{isAdmin?<Btn title="+ 新增记录" onPress={()=>openForm(tab)}/>:<Text style={{color:C.muted,fontSize:12,marginVertical:8}}>团队成员只读模式</Text>}{list.map(item=><Card key={item.id}><View style={{flexDirection:'row',justifyContent:'space-between',alignItems:'center'}}><Text style={{fontWeight:'900',fontSize:15,color:C.ink,flex:1}}>{item.display_name||item.order_no||item.payment_no||item.payout_no||item.account_code||'业务记录'}</Text><Text style={{fontSize:11,color:item.status==='completed'||item.status==='confirmed'||item.status==='active'?C.green:C.amber}}>{item.status}</Text></View><Text style={{fontSize:13,color:C.muted,marginTop:7}}>{item.customer_label||item.payer_label||item.payee_label||item.provider||item.account_hint||'—'}</Text><Text style={{fontSize:18,fontWeight:'900',color:C.navy,marginTop:7}}>{item.amount!==undefined?money(item.amount):item.account_code||''}</Text><Label>创建时间：{date(item.created_at)}</Label>{isAdmin?<><Btn title="编辑记录" light onPress={()=>openForm(tab,item)}/>{(tab==='orders'||tab==='payments'||tab==='payouts'||tab==='accounts')?<ScrollView horizontal>{({accounts:['active','paused','disabled'],orders:['pending','processing','completed','cancelled','refunded'],payments:['pending','confirmed','failed','cancelled','refunded'],payouts:['pending','approved','rejected','recorded_paid','cancelled']}[tab]).map(s=><TouchableOpacity key={s} onPress={()=>changeStatus(tab,item,s)} style={{padding:8,marginRight:5,backgroundColor:C.bg,borderRadius:8}}><Text style={{fontSize:11,color:C.blue}}>设为{s}</Text></TouchableOpacity>)}</ScrollView>:null}</>:null}</Card>)}{list.length===0?<Card><Text style={{textAlign:'center',color:C.muted}}>暂无匹配记录</Text></Card>:null}</>}
+ {notice?<Text style={{color:C.red,fontSize:12,marginTop:10}}>{notice}</Text>:null}
+ </ScrollView><View style={{flexDirection:'row',backgroundColor:C.white,borderTopWidth:1,borderColor:C.line,paddingVertical:7}}>{TABS.map(x=><TouchableOpacity key={x[0]} onPress={()=>go(x[0])} style={{flex:1,alignItems:'center'}}><Text style={{fontSize:19,color:tab===x[0]?C.navy:'#9AA6B5'}}>{x[2]}</Text><Text style={{fontSize:10,color:tab===x[0]?C.navy:C.muted,fontWeight:tab===x[0]?'800':'500'}}>{x[1]}</Text></TouchableOpacity>)}</View></SafeAreaView>;
 }
-function Tile({icon,title,subtitle,onPress}) {
-  return <TouchableOpacity onPress={onPress} style={{width:'48%',backgroundColor:C.white,borderRadius:16,padding:16,marginBottom:12,borderWidth:1,borderColor:C.line}}>
-    <Text style={{fontSize:24,color:C.blue,marginBottom:12}}>{icon}</Text>
-    <Text style={{fontSize:16,fontWeight:'700',color:C.ink}}>{title}</Text>
-    <Text style={{fontSize:12,color:C.muted,marginTop:5}}>{subtitle}</Text>
-  </TouchableOpacity>;
-}
-function Header({title,sub}) {
-  return <View style={{marginBottom:20}}><Text style={{fontSize:25,fontWeight:'800',color:C.ink}}>{title}</Text>{!!sub&&<Text style={{fontSize:13,color:C.muted,marginTop:6}}>{sub}</Text>}</View>;
-}
-function Empty({title,desc}) {
-  return <View style={{backgroundColor:C.white,borderRadius:16,padding:24,alignItems:'center',borderWidth:1,borderColor:C.line,marginTop:8}}>
-    <Text style={{fontSize:32,color:'#AAB7C7',marginBottom:12}}>▤</Text>
-    <Text style={{fontSize:16,fontWeight:'700',color:C.ink}}>{title}</Text>
-    <Text style={{fontSize:13,color:C.muted,textAlign:'center',marginTop:8,lineHeight:20}}>{desc}</Text>
-  </View>;
-}
-
-async function checkWorkspaceAccess(user) {
-  if (!user?.id || !user?.email) throw new Error('无法读取账号信息，请重新登录。');
-  const { data: admin, error: adminError } = await supabase
-    .from('store_admins').select('email').eq('email', user.email).maybeSingle();
-  if (adminError) throw adminError;
-  if (admin) return '店主';
-  const { data: member, error: memberError } = await supabase
-    .from('store_team_members').select('user_id').eq('user_id', user.id).maybeSingle();
-  if (memberError) throw memberError;
-  if (member) return '团队成员';
-  throw new Error('此账号尚未获得南政工作台访问权限，请联系店主添加。');
-}
-
-export default function App() {
-  const [session,setSession] = useState(null);
-  const [role,setRole] = useState('');
-  const [authReady,setAuthReady] = useState(false);
-  const [busy,setBusy] = useState(false);
-  const [email,setEmail] = useState('');
-  const [password,setPassword] = useState('');
-  const [tab,setTab] = useState('home');
-  const [notice,setNotice] = useState('');
-  const [resetMode,setResetMode] = useState(false);
-  const [newPassword,setNewPassword] = useState('');
-
-  useEffect(() => {
-    let alive = true;
-    const handleRecoveryUrl = async (url) => {
-      if (!url || !url.includes('reset-password')) return;
-      try {
-        const hash = url.includes('#') ? url.split('#').pop() : '';
-        const query = url.includes('?') ? url.split('?')[1].split('#')[0] : '';
-        const params = new URLSearchParams(hash || query);
-        const access_token = params.get('access_token');
-        const refresh_token = params.get('refresh_token');
-        if (params.get('type') !== 'recovery' || !access_token || !refresh_token) {
-          setNotice('重置链接无效或已过期，请重新申请密码重置邮件。');
-          return;
-        }
-        const { error } = await supabase.auth.setSession({ access_token, refresh_token });
-        if (error) throw error;
-        if (alive) {
-          setResetMode(true);
-          setNotice('身份验证成功，请设置新密码。');
-        }
-      } catch (error) {
-        if (alive) setNotice(error.message || '无法验证重置链接，请重新申请。');
-      }
-    };
-    Linking.getInitialURL().then(handleRecoveryUrl).catch(() => {});
-    const linkSubscription = Linking.addEventListener('url', ({url}) => handleRecoveryUrl(url));
-    const applySession = async (nextSession) => {
-      if (!nextSession?.user) {
-        if (alive) { setSession(null); setRole(''); setAuthReady(true); }
-        return;
-      }
-      try {
-        const nextRole = await checkWorkspaceAccess(nextSession.user);
-        if (alive) { setSession(nextSession); setRole(nextRole); setNotice(''); setAuthReady(true); }
-      } catch (error) {
-        await supabase.auth.signOut();
-        if (alive) { setSession(null); setRole(''); setNotice(error.message || '账号无权访问工作台。'); setAuthReady(true); }
-      }
-    };
-    supabase.auth.getSession().then(({data, error}) => {
-      if (error) throw error;
-      return applySession(data.session);
-    }).catch(error => {
-      if (alive) { setNotice(error.message || '登录状态读取失败。'); setAuthReady(true); }
-    });
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      // Defer database lookups so the auth callback does not block Supabase's internal lock.
-      Promise.resolve().then(() => applySession(nextSession));
-    });
-    return () => { alive = false; linkSubscription.remove(); listener.subscription.unsubscribe(); };
-  }, []);
-
-  const signIn = async () => {
-    if (!email.trim() || !password) { setNotice('请输入邮箱和密码。'); return; }
-    setBusy(true); setNotice('');
-    try {
-      const { data, error } = await supabase.auth.signInWithPassword({email:email.trim().toLowerCase(), password});
-      if (error) throw error;
-      const accessRole = await checkWorkspaceAccess(data.user);
-      setSession(data.session); setRole(accessRole); setPassword(''); setTab('home');
-      setNotice('');
-    } catch (error) {
-      setNotice(error.message || '登录失败，请检查邮箱和密码。');
-    } finally { setBusy(false); }
-  };
-  const requestPasswordReset = async () => {
-    const targetEmail = email.trim().toLowerCase();
-    if (!targetEmail) { setNotice('请先输入注册邮箱，再点击忘记密码。'); return; }
-    setBusy(true); setNotice('');
-    try {
-      const { error } = await supabase.auth.resetPasswordForEmail(targetEmail, {
-        redirectTo: 'nanzhengworkbench://reset-password',
-      });
-      if (error) throw error;
-      setNotice('重置邮件已发送，请到邮箱打开邮件中的重置按钮。');
-    } catch (error) {
-      setNotice(error.message || '重置邮件发送失败，请稍后重试。');
-    } finally { setBusy(false); }
-  };
-  const saveNewPassword = async () => {
-    if (newPassword.length < 8) { setNotice('新密码至少需要 8 位。'); return; }
-    setBusy(true); setNotice('');
-    try {
-      const { error } = await supabase.auth.updateUser({ password: newPassword });
-      if (error) throw error;
-      await supabase.auth.signOut();
-      setResetMode(false); setNewPassword(''); setPassword('');
-      setNotice('密码修改成功，请使用新密码登录。');
-    } catch (error) {
-      setNotice(error.message || '密码修改失败，请重新打开重置邮件。');
-    } finally { setBusy(false); }
-  };
-
-  const signOut = async () => {
-    setBusy(true);
-    const { error } = await supabase.auth.signOut();
-    setBusy(false);
-    if (error) setNotice(error.message || '退出失败，请重试。');
-    else { setSession(null); setRole(''); setTab('home'); setPassword(''); setNotice('已安全退出。'); }
-  };
-
-  if (!authReady) return <SafeAreaView style={{flex:1,backgroundColor:C.navy,alignItems:'center',justifyContent:'center'}}>
-    <StatusBar barStyle="light-content" /><ActivityIndicator color="#FFFFFF" size="large" />
-    <Text style={{color:'#FFFFFF',marginTop:14}}>正在安全连接南政工作台…</Text>
-  </SafeAreaView>;
-
-  if (resetMode) return <SafeAreaView style={{flex:1,backgroundColor:C.navy}}>
-    <StatusBar barStyle="light-content" />
-    <View style={{flex:1,justifyContent:'center',padding:26}}>
-      <View style={{backgroundColor:C.white,borderRadius:20,padding:22}}>
-        <Text style={{fontSize:23,fontWeight:'900',color:C.ink,marginBottom:10}}>设置新密码</Text>
-        <Text style={{fontSize:13,color:C.muted,lineHeight:20,marginBottom:18}}>验证已通过。请设置至少 8 位的新密码。</Text>
-        <TextInput value={newPassword} onChangeText={setNewPassword} placeholder="请输入新密码（至少 8 位）" secureTextEntry autoCapitalize="none" style={{borderWidth:1,borderColor:C.line,borderRadius:11,padding:13,marginBottom:16,color:C.ink}} />
-        <Button title={busy?'正在保存…':'保存新密码'} disabled={busy} onPress={saveNewPassword} />
-        {!!notice && <Text style={{fontSize:12,color:C.red,textAlign:'center',marginTop:12,lineHeight:18}}>{notice}</Text>}
-      </View>
-    </View>
-  </SafeAreaView>;
-
-  if (!session) return <SafeAreaView style={{flex:1,backgroundColor:C.navy}}>
-    <StatusBar barStyle="light-content" />
-    <View style={{flex:1,justifyContent:'center',padding:26}}>
-      <View style={{width:66,height:66,borderRadius:20,backgroundColor:'#FFFFFF',alignItems:'center',justifyContent:'center',marginBottom:24}}>
-        <Text style={{fontSize:32,color:C.navy,fontWeight:'900'}}>南</Text>
-      </View>
-      <Text style={{fontSize:30,fontWeight:'900',color:C.white}}>南政工作台</Text>
-      <Text style={{fontSize:15,color:'#D2DDEC',marginTop:8,marginBottom:34}}>私人团队 · 商品与订单管理</Text>
-      <View style={{backgroundColor:C.white,borderRadius:20,padding:22}}>
-        <Text style={{fontSize:20,fontWeight:'800',color:C.ink,marginBottom:18}}>欢迎登录</Text>
-        <Text style={{fontSize:13,color:C.muted,marginBottom:7}}>邮箱</Text>
-        <TextInput value={email} onChangeText={setEmail} placeholder="请输入邮箱" autoCapitalize="none" autoCorrect={false} keyboardType="email-address" style={{borderWidth:1,borderColor:C.line,borderRadius:11,padding:13,marginBottom:14,color:C.ink}} />
-        <Text style={{fontSize:13,color:C.muted,marginBottom:7}}>密码</Text>
-        <TextInput value={password} onChangeText={setPassword} placeholder="请输入密码" secureTextEntry autoCapitalize="none" style={{borderWidth:1,borderColor:C.line,borderRadius:11,padding:13,marginBottom:18,color:C.ink}} />
-        <Button title={busy?'正在登录…':'登录南政工作台'} disabled={busy} onPress={signIn} />
-        <TouchableOpacity disabled={busy} onPress={requestPasswordReset} style={{alignItems:'center',paddingVertical:13}}>
-          <Text style={{color:C.blue,fontSize:13,fontWeight:'700'}}>忘记密码？发送重置邮件</Text>
-        </TouchableOpacity>
-        {!!notice && <Text style={{fontSize:12,color:C.red,textAlign:'center',marginTop:12,lineHeight:18}}>{notice}</Text>}
-        <Text style={{fontSize:11,color:C.muted,textAlign:'center',marginTop:13}}>仅限店主及已获授权的团队成员登录</Text>
-      </View>
-      <Text style={{color:'#B9C9DC',fontSize:11,textAlign:'center',marginTop:22}}>私人内部使用 · 不开放公众注册</Text>
-    </View>
-  </SafeAreaView>;
-
-  const go = (id)=>{setTab(id);setNotice('');};
-  const title = ({home:'工作台首页',products:'商品管理',orders:'订单中心',team:'团队成员',stats:'经营统计'})[tab];
-  return <SafeAreaView style={{flex:1,backgroundColor:C.bg}}>
-    <StatusBar barStyle="dark-content" />
-    <View style={{backgroundColor:C.white,paddingHorizontal:20,paddingTop:12,paddingBottom:14,borderBottomWidth:1,borderBottomColor:C.line,flexDirection:'row',alignItems:'center',justifyContent:'space-between'}}>
-      <View><Text style={{fontSize:18,fontWeight:'900',color:C.navy}}>南政工作台</Text><Text style={{fontSize:11,color:C.muted,marginTop:2}}>{role} · 私人团队管理系统</Text></View>
-      <TouchableOpacity disabled={busy} onPress={signOut} style={{backgroundColor:C.pale,paddingHorizontal:12,paddingVertical:8,borderRadius:10}}><Text style={{color:C.navy,fontWeight:'700',fontSize:12}}>退出</Text></TouchableOpacity>
-    </View>
-    <ScrollView contentContainerStyle={{padding:18,paddingBottom:30}}>
-      {tab==='home' && <>
-        <View style={{backgroundColor:C.navy,borderRadius:18,padding:20,marginBottom:18}}>
-          <Text style={{fontSize:13,color:'#D6E2F0'}}>你好，{role}</Text>
-          <Text style={{fontSize:24,color:C.white,fontWeight:'900',marginTop:7}}>今天也一起加油</Text>
-          <Text style={{fontSize:12,color:'#D6E2F0',marginTop:8}}>店铺：南政工作台　·　货币：CNY</Text>
-        </View>
-        <Header title="工作功能" sub="选择要进入的管理页面" />
-        <View style={{flexDirection:'row',flexWrap:'wrap',justifyContent:'space-between'}}>
-          <Tile icon="▦" title="商品管理" subtitle="查看商品与库存" onPress={()=>go('products')} />
-          <Tile icon="▤" title="订单中心" subtitle="查看订单处理情况" onPress={()=>go('orders')} />
-          <Tile icon="♙" title="团队成员" subtitle="查看团队成员" onPress={()=>go('team')} />
-          <Tile icon="▥" title="经营统计" subtitle="查看经营数据" onPress={()=>go('stats')} />
-        </View>
-        <View style={{backgroundColor:C.white,borderRadius:16,padding:16,borderWidth:1,borderColor:C.line}}>
-          <Text style={{fontWeight:'800',color:C.ink,fontSize:15}}>账号信息</Text>
-          <Text style={{color:C.muted,fontSize:13,marginTop:7}}>{session.user.email}</Text>
-          <Text style={{color:C.green,fontSize:12,marginTop:6}}>已通过 Supabase 身份验证</Text>
-        </View>
-      </>}
-      {tab==='products' && <><Header title="商品管理" sub="统一查看店铺商品资料" /><Empty title="商品列表页面已建立" desc="商品数据接入后，这里会显示商品图片、名称、售价、库存与分类。" /><View style={{marginTop:16}}><Button title="返回首页" light onPress={()=>go('home')} /></View></>}
-      {tab==='orders' && <><Header title="订单中心" sub="集中查看团队订单" /><Empty title="订单列表页面已建立" desc="订单数据接入后，这里会显示订单编号、下单时间、金额、付款与处理状态。" /><View style={{marginTop:16}}><Button title="返回首页" light onPress={()=>go('home')} /></View></>}
-      {tab==='team' && <><Header title="团队成员" sub="私人团队账号与权限" /><View style={{backgroundColor:C.white,borderRadius:16,padding:17,borderWidth:1,borderColor:C.line}}><Text style={{fontSize:15,fontWeight:'800',color:C.ink}}>权限原则</Text><Text style={{fontSize:13,color:C.muted,lineHeight:21,marginTop:8}}>店主负责管理；团队成员使用自己的邮箱和密码登录，只能查看获授权的商品与订单。</Text><Text style={{fontSize:12,color:C.blue,marginTop:14,fontWeight:'700'}}>成员名单将在团队数据接入后显示</Text></View></>}
-      {tab==='stats' && <><Header title="经营统计" sub="经营数据概览" /><Empty title="统计页面已建立" desc="接入真实订单后，可显示销售额、订单数量与商品表现。金额单位为人民币 CNY。" /></>}
-      {!!notice && <Text style={{color:C.green,fontSize:12,marginTop:14}}>{notice}</Text>}
-    </ScrollView>
-    <View style={{flexDirection:'row',backgroundColor:C.white,borderTopWidth:1,borderTopColor:C.line,paddingTop:8,paddingBottom:8}}>
-      {NAV.map(n=><TouchableOpacity key={n.id} onPress={()=>go(n.id)} style={{flex:1,alignItems:'center',paddingVertical:4}}>
-        <Text style={{fontSize:20,color:tab===n.id?C.navy:'#9AA6B5'}}>{n.icon}</Text>
-        <Text style={{fontSize:10,fontWeight:tab===n.id?'800':'500',color:tab===n.id?C.navy:C.muted,marginTop:3}}>{n.label}</Text>
-      </TouchableOpacity>)}
-    </View>
-  </SafeAreaView>;
-}
+export default App;
