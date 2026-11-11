@@ -32,8 +32,13 @@ jobs:
           base64 --decode .github/source/App.js.gz.b64 | gzip --decompress --stdout > App.js
           sed -i "s/import { supabase, supabaseConfigured } from '.\/lib\/supabase';/import { supabase } from '.\/lib\/supabase';/" App.js
           sed -i "s/supabaseConfigured?'刷新完成':'本地演示数据已刷新'/supabase?'刷新完成':'请先配置登录服务'/" App.js
+          # The restored prototype contained a duplicate accounts state declaration.
+          # Keep the first accounts state and retain the following orders/payments/payouts states.
+          perl -0pi -e 's/const \[accounts,setAccounts\]=useState\(seedAccounts\),\[orders/const [orders/' App.js
           test -s App.js
           echo "Restored App.js ($(wc -c < App.js) bytes)"
+          echo "Checking restored source for duplicate state declarations"
+          test "$(grep -o 'const \[accounts,setAccounts\]' App.js | wc -l)" -le 1
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund
