@@ -1,5 +1,5 @@
 import React,{useCallback,useEffect,useMemo,useState} from 'react';
-import {SafeAreaView,View,Text,TextInput,TouchableOpacity,ScrollView,StatusBar,ActivityIndicator,RefreshControl,Alert} from 'react-native';
+import {SafeAreaView,View,Text,TextInput,TouchableOpacity,ScrollView,StatusBar,ActivityIndicator,RefreshControl,Alert,Linking} from 'react-native';
 import {supabase} from './lib/supabase';
 
 const C={navy:'#102B52',blue:'#245B9B',bg:'#F3F6FA',white:'#FFFFFF',ink:'#172B45',muted:'#78879A',line:'#E4EAF1',green:'#16845B',red:'#B42318',amber:'#A15C00'};
@@ -28,6 +28,8 @@ function App(){
  };
  const accept=async s=>{if(!s?.user){setSession(null);setRole('');setReady(true);return;}try{const r=await access(s.user);setSession(s);setRole(r);setNotice('');}catch(e){await supabase.auth.signOut();setSession(null);setRole('');setNotice(err(e));}finally{setReady(true);}};
  useEffect(()=>{let live=true;supabase.auth.getSession().then(({data,error})=>{if(error)throw error;return accept(data.session)}).catch(e=>{if(live){setNotice(err(e));setReady(true)}});const {data:l}=supabase.auth.onAuthStateChange((event,s)=>{Promise.resolve().then(()=>{if(live)accept(s)})});return()=>{live=false;l.subscription.unsubscribe()}},[]);
+ useEffect(()=>{let alive=true;const handle=async url=>{if(!url||!url.includes('reset-password'))return;try{const hash=url.includes('#')?url.split('#').pop():'';const query=url.includes('?')?url.split('?')[1].split('#')[0]:'';const p=new URLSearchParams(hash||query);const access_token=p.get('access_token'),refresh_token=p.get('refresh_token');if(p.get('type')!=='recovery'||!access_token||!refresh_token){setNotice('重置链接无效或已过期，请重新申请');return;}const {error}=await supabase.auth.setSession({access_token,refresh_token});if(error)throw error;if(alive){setReset(true);setNotice('验证成功，请设置新密码');}}catch(e){if(alive)setNotice(err(e));}};Linking.getInitialURL().then(handle).catch(()=>{});const sub=Linking.addEventListener('url',({url})=>handle(url));return()=>{alive=false;sub.remove();}},[]);
+
  const load=useCallback(async()=>{if(!session?.user?.id)return;setRefreshing(true);try{const specs=[['workbench_accounts',setAccounts],['workbench_orders',setOrders],['workbench_payments',setPayments],['workbench_payouts',setPayouts]];for(const [table,setter] of specs){const {data,error}=await supabase.from(table).select('*').order('created_at',{ascending:false}).limit(200);if(error)throw error;setter(data||[]);}if(isAdmin){const {data,error}=await supabase.from('store_team_members').select('user_id,added_by,created_at').order('created_at',{ascending:false});if(error)throw error;setTeam(data||[]);} }catch(e){setNotice('数据刷新失败：'+err(e));}finally{setRefreshing(false)}},[session,isAdmin]);
  useEffect(()=>{load()},[load]);
  const login=async()=>{if(!email.trim()||!password){setNotice('请输入邮箱和密码');return;}setBusy(true);setNotice('');try{const {data,error}=await supabase.auth.signInWithPassword({email:email.trim().toLowerCase(),password});if(error)throw error;const r=await access(data.user);setSession(data.session);setRole(r);setTab('home');setPassword('');}catch(e){setNotice(err(e))}finally{setBusy(false)}};
