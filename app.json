@@ -2,7 +2,7 @@
   "expo": {
     "name": "南政工作台",
     "slug": "nanzheng-workbench",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
@@ -11,7 +11,8 @@
       "bundleIdentifier": "com.nanzheng.workbench"
     },
     "android": {
-      "package": "com.nanzheng.workbench"
+      "package": "com.nanzheng.workbench",
+      "versionCode": 2
     },
     "scheme": "nanzhengworkbench"
   }
