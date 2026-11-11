@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { SafeAreaView, View, Text, TextInput, TouchableOpacity, ScrollView, StatusBar, ActivityIndicator } from 'react-native';
+import { SafeAreaView, View, Text, TextInput, TouchableOpacity, ScrollView, StatusBar, ActivityIndicator, Linking } from 'react-native';
 import { supabase } from './lib/supabase';
 
 const NAV = [
@@ -56,9 +56,35 @@ export default function App() {
   const [password,setPassword] = useState('');
   const [tab,setTab] = useState('home');
   const [notice,setNotice] = useState('');
+  const [resetMode,setResetMode] = useState(false);
+  const [newPassword,setNewPassword] = useState('');
 
   useEffect(() => {
     let alive = true;
+    const handleRecoveryUrl = async (url) => {
+      if (!url || !url.includes('reset-password')) return;
+      try {
+        const hash = url.includes('#') ? url.split('#').pop() : '';
+        const query = url.includes('?') ? url.split('?')[1].split('#')[0] : '';
+        const params = new URLSearchParams(hash || query);
+        const access_token = params.get('access_token');
+        const refresh_token = params.get('refresh_token');
+        if (params.get('type') !== 'recovery' || !access_token || !refresh_token) {
+          setNotice('重置链接无效或已过期，请重新申请密码重置邮件。');
+          return;
+        }
+        const { error } = await supabase.auth.setSession({ access_token, refresh_token });
+        if (error) throw error;
+        if (alive) {
+          setResetMode(true);
+          setNotice('身份验证成功，请设置新密码。');
+        }
+      } catch (error) {
+        if (alive) setNotice(error.message || '无法验证重置链接，请重新申请。');
+      }
+    };
+    Linking.getInitialURL().then(handleRecoveryUrl).catch(() => {});
+    const linkSubscription = Linking.addEventListener('url', ({url}) => handleRecoveryUrl(url));
     const applySession = async (nextSession) => {
       if (!nextSession?.user) {
         if (alive) { setSession(null); setRole(''); setAuthReady(true); }
@@ -82,7 +108,7 @@ export default function App() {
       // Defer database lookups so the auth callback does not block Supabase's internal lock.
       Promise.resolve().then(() => applySession(nextSession));
     });
-    return () => { alive = false; listener.subscription.unsubscribe(); };
+    return () => { alive = false; linkSubscription.remove(); listener.subscription.unsubscribe(); };
   }, []);
 
   const signIn = async () => {
@@ -98,6 +124,34 @@ export default function App() {
       setNotice(error.message || '登录失败，请检查邮箱和密码。');
     } finally { setBusy(false); }
   };
+  const requestPasswordReset = async () => {
+    const targetEmail = email.trim().toLowerCase();
+    if (!targetEmail) { setNotice('请先输入注册邮箱，再点击忘记密码。'); return; }
+    setBusy(true); setNotice('');
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(targetEmail, {
+        redirectTo: 'nanzhengworkbench://reset-password',
+      });
+      if (error) throw error;
+      setNotice('重置邮件已发送，请到邮箱打开邮件中的重置按钮。');
+    } catch (error) {
+      setNotice(error.message || '重置邮件发送失败，请稍后重试。');
+    } finally { setBusy(false); }
+  };
+  const saveNewPassword = async () => {
+    if (newPassword.length < 8) { setNotice('新密码至少需要 8 位。'); return; }
+    setBusy(true); setNotice('');
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) throw error;
+      await supabase.auth.signOut();
+      setResetMode(false); setNewPassword(''); setPassword('');
+      setNotice('密码修改成功，请使用新密码登录。');
+    } catch (error) {
+      setNotice(error.message || '密码修改失败，请重新打开重置邮件。');
+    } finally { setBusy(false); }
+  };
+
   const signOut = async () => {
     setBusy(true);
     const { error } = await supabase.auth.signOut();
@@ -109,6 +163,19 @@ export default function App() {
   if (!authReady) return <SafeAreaView style={{flex:1,backgroundColor:C.navy,alignItems:'center',justifyContent:'center'}}>
     <StatusBar barStyle="light-content" /><ActivityIndicator color="#FFFFFF" size="large" />
     <Text style={{color:'#FFFFFF',marginTop:14}}>正在安全连接南政工作台…</Text>
+  </SafeAreaView>;
+
+  if (resetMode) return <SafeAreaView style={{flex:1,backgroundColor:C.navy}}>
+    <StatusBar barStyle="light-content" />
+    <View style={{flex:1,justifyContent:'center',padding:26}}>
+      <View style={{backgroundColor:C.white,borderRadius:20,padding:22}}>
+        <Text style={{fontSize:23,fontWeight:'900',color:C.ink,marginBottom:10}}>设置新密码</Text>
+        <Text style={{fontSize:13,color:C.muted,lineHeight:20,marginBottom:18}}>验证已通过。请设置至少 8 位的新密码。</Text>
+        <TextInput value={newPassword} onChangeText={setNewPassword} placeholder="请输入新密码（至少 8 位）" secureTextEntry autoCapitalize="none" style={{borderWidth:1,borderColor:C.line,borderRadius:11,padding:13,marginBottom:16,color:C.ink}} />
+        <Button title={busy?'正在保存…':'保存新密码'} disabled={busy} onPress={saveNewPassword} />
+        {!!notice && <Text style={{fontSize:12,color:C.red,textAlign:'center',marginTop:12,lineHeight:18}}>{notice}</Text>}
+      </View>
+    </View>
   </SafeAreaView>;
 
   if (!session) return <SafeAreaView style={{flex:1,backgroundColor:C.navy}}>
@@ -126,6 +193,9 @@ export default function App() {
         <Text style={{fontSize:13,color:C.muted,marginBottom:7}}>密码</Text>
         <TextInput value={password} onChangeText={setPassword} placeholder="请输入密码" secureTextEntry autoCapitalize="none" style={{borderWidth:1,borderColor:C.line,borderRadius:11,padding:13,marginBottom:18,color:C.ink}} />
         <Button title={busy?'正在登录…':'登录南政工作台'} disabled={busy} onPress={signIn} />
+        <TouchableOpacity disabled={busy} onPress={requestPasswordReset} style={{alignItems:'center',paddingVertical:13}}>
+          <Text style={{color:C.blue,fontSize:13,fontWeight:'700'}}>忘记密码？发送重置邮件</Text>
+        </TouchableOpacity>
         {!!notice && <Text style={{fontSize:12,color:C.red,textAlign:'center',marginTop:12,lineHeight:18}}>{notice}</Text>}
         <Text style={{fontSize:11,color:C.muted,textAlign:'center',marginTop:13}}>仅限店主及已获授权的团队成员登录</Text>
       </View>
