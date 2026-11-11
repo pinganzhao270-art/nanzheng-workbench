@@ -40,6 +40,13 @@ jobs:
           echo "Checking restored source for duplicate state declarations"
           test "$(grep -o 'const \[accounts,setAccounts\]' App.js | wc -l)" -le 1
 
+      - name: Diagnose restored JavaScript state declarations
+        run: |
+          echo '--- App.js lines 65-90 ---'
+          nl -ba App.js | sed -n '65,90p'
+          echo '--- state declarations ---'
+          grep -nE 'const \\[(accounts|orders|payments|payouts),' App.js || true
+
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
