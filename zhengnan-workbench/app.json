@@ -1,0 +1,20 @@
+{
+  "expo": {
+    "name": "政南工作台",
+    "slug": "zhengnan-workbench",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "scheme": "zhengnanworkbench",
+    "android": {
+      "package": "com.zhengnan.workbench",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "backgroundColor": "#102C50"
+      }
+    },
+    "ios": {
+      "bundleIdentifier": "com.zhengnan.workbench"
+    }
+  }
+}
